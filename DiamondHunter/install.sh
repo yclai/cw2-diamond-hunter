@@ -1,98 +1,31 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2268
 
 # The files installed by the script conform to the Filesystem Hierarchy Standard:
 # https://wiki.linuxfoundation.org/lsb/fhs
 
 # The URL of the script project is:
-# https://github.com/XTLS/Xray-install
+# https://github.com/v2fly/fhs-install-v2ray
 
 # The URL of the script is:
-# https://raw.githubusercontent.com/XTLS/Xray-install/main/install-release.sh
+# https://raw.githubusercontent.com/v2fly/fhs-install-v2ray/master/install-release.sh
 
 # If the script executes incorrectly, go to:
-# https://github.com/XTLS/Xray-install/issues
+# https://github.com/v2fly/fhs-install-v2ray/issues
 
 # You can set this variable whatever you want in shell session right before running this script by issuing:
-# export DAT_PATH='/usr/local/share/xray'
-DAT_PATH=${DAT_PATH:-/usr/local/share/xray}
+# export DAT_PATH='/usr/local/share/v2ray'
+DAT_PATH=${DAT_PATH:-/usr/local/share/v2ray}
 
 # You can set this variable whatever you want in shell session right before running this script by issuing:
-# export JSON_PATH='/usr/local/etc/xray'
-JSON_PATH=${JSON_PATH:-/usr/local/etc/xray}
+# export JSON_PATH='/usr/local/etc/v2ray'
+JSON_PATH=${JSON_PATH:-/usr/local/etc/v2ray}
 
-# Set this variable only if you are starting xray with multiple configuration files:
-# export JSONS_PATH='/usr/local/etc/xray'
+# Set this variable only if you are starting v2ray with multiple configuration files:
+# export JSONS_PATH='/usr/local/etc/v2ray'
 
 # Set this variable only if you want this script to check all the systemd unit file:
 # export check_all_service_files='yes'
-
-# Gobal verbals
-
-if [[ -f '/etc/systemd/system/xray.service' ]] && [[ -f '/usr/local/bin/xray' ]]; then
-  XRAY_IS_INSTALLED_BEFORE_RUNNING_SCRIPT=1
-else
-  XRAY_IS_INSTALLED_BEFORE_RUNNING_SCRIPT=0
-fi
-
-# Xray current version
-CURRENT_VERSION=''
-
-# Xray latest release version
-RELEASE_LATEST=''
-
-# Xray latest prerelease/release version
-PRE_RELEASE_LATEST=''
-
-# Xray version will be installed
-INSTALL_VERSION=''
-
-# install
-INSTALL='0'
-
-# install-geodata
-INSTALL_GEODATA='0'
-
-# remove
-REMOVE='0'
-
-# help
-HELP='0'
-
-# check
-CHECK='0'
-
-# --force
-FORCE='0'
-
-# --beta
-BETA='0'
-
-# --install-user ?
-INSTALL_USER=''
-
-# --without-geodata
-NO_GEODATA='0'
-
-# --without-logfiles
-NO_LOGFILES='0'
-
-# --no-update-service
-N_UP_SERVICE='0'
-
-# --reinstall
-REINSTALL='0'
-
-# --version ?
-SPECIFIED_VERSION=''
-
-# --local ?
-LOCAL_FILE=''
-
-# --proxy ?
-PROXY=''
-
-# --purge
-PURGE='0'
 
 curl() {
   $(type -P curl) -L -q --retry 5 --retry-delay 10 --retry-max-time 60 "$@"
@@ -113,10 +46,16 @@ systemd_cat_config() {
 }
 
 check_if_running_as_root() {
-  # If you want to run as another user, please modify $EUID to be owned by this user
-  if [[ "$EUID" -ne '0' ]]; then
-    echo "error: You must run this script as root!"
-    exit 1
+  # If you want to run as another user, please modify $UID to be owned by this user
+  if [[ "$UID" -ne '0' ]]; then
+    echo "WARNING: The user currently executing this script is not root. You may encounter the insufficient privilege error."
+    read -r -p "Are you sure you want to continue? [y/n] " cont_without_been_root
+    if [[ x"${cont_without_been_root:0:1}" = x'y' ]]; then
+      echo "Continuing the installation with current user..."
+    else
+      echo "Not running with root, exiting..."
+      exit 1
+    fi
   fi
 }
 
@@ -151,7 +90,6 @@ identify_the_operating_system_and_architecture() {
         ;;
       'mips64')
         MACHINE='mips64'
-        lscpu | grep -q "Little Endian" && MACHINE='mips64le'
         ;;
       'mips64le')
         MACHINE='mips64le'
@@ -179,6 +117,7 @@ identify_the_operating_system_and_architecture() {
     fi
     # Do not combine this judgment condition with the following judgment condition.
     ## Be aware of Linux distribution like Gentoo, which kernel supports switch between Systemd and OpenRC.
+    ### Refer: https://github.com/v2fly/fhs-install-v2ray/issues/84#issuecomment-688574989
     if [[ -f /.dockerenv ]] || grep -q 'docker\|lxc' /proc/1/cgroup && [[ "$(type -P systemctl)" ]]; then
       true
     elif [[ -d /run/systemd/system ]] || grep -q systemd <(ls -l /sbin/init); then
@@ -207,10 +146,6 @@ identify_the_operating_system_and_architecture() {
       PACKAGE_MANAGEMENT_INSTALL='pacman -Syu --noconfirm'
       PACKAGE_MANAGEMENT_REMOVE='pacman -Rsn'
       package_provide_tput='ncurses'
-     elif [[ "$(type -P emerge)" ]]; then
-      PACKAGE_MANAGEMENT_INSTALL='emerge -v'
-      PACKAGE_MANAGEMENT_REMOVE='emerge -Cv'
-      package_provide_tput='ncurses'
     else
       echo "error: The script does not support the package manager in this operating system."
       exit 1
@@ -223,79 +158,42 @@ identify_the_operating_system_and_architecture() {
 
 ## Demo function for processing parameters
 judgment_parameters() {
-  local local_install='0'
-  local temp_version='0'
   while [[ "$#" -gt '0' ]]; do
     case "$1" in
-      'install')
-        INSTALL='1'
-        ;;
-      'install-geodata')
-        INSTALL_GEODATA='1'
-        ;;
-      'remove')
-        REMOVE='1'
-        ;;
-      'help')
-        HELP='1'
-        ;;
-      'check')
-        CHECK='1'
-        ;;
-      '--without-geodata')
-        NO_GEODATA='1'
-        ;;
-      '--without-logfiles')
-        NO_LOGFILES='1'
-        ;;
-      '--purge')
-        PURGE='1'
-        ;;
-      '--version')
-        if [[ -z "$2" ]]; then
-          echo "error: Please specify the correct version."
+      '--remove')
+        if [[ "$#" -gt '1' ]]; then
+          echo 'error: Please enter the correct parameters.'
           exit 1
         fi
-        temp_version='1'
-        SPECIFIED_VERSION="$2"
-        shift
+        REMOVE='1'
+        ;;
+      '--version')
+        VERSION="${2:?error: Please specify the correct version.}"
+        break
+        ;;
+      '-c' | '--check')
+        CHECK='1'
+        break
         ;;
       '-f' | '--force')
         FORCE='1'
+        break
         ;;
-      '--beta')
-        BETA='1'
+      '-h' | '--help')
+        HELP='1'
+        break
         ;;
       '-l' | '--local')
-        local_install='1'
-        if [[ -z "$2" ]]; then
-          echo "error: Please specify the correct local file."
-          exit 1
-        fi
-        LOCAL_FILE="$2"
-        shift
+        LOCAL_INSTALL='1'
+        LOCAL_FILE="${2:?error: Please specify the correct local file.}"
+        break
         ;;
       '-p' | '--proxy')
-        if [[ -z "$2" ]]; then
-          echo "error: Please specify the proxy server address."
+        if [[ -z "${2:?error: Please specify the proxy server address.}" ]]; then
           exit 1
         fi
         PROXY="$2"
         shift
-        ;;
-      '-u' | '--install-user')
-        if [[ -z "$2" ]]; then
-          echo "error: Please specify the install user.}"
-          exit 1
-        fi
-        INSTALL_USER="$2"
-        shift
-        ;;
-      '--reinstall')
-        REINSTALL='1'
-        ;;
-      '--no-update-service')
-        N_UP_SERVICE='1'
         ;;
       *)
         echo "$0: unknown option -- -"
@@ -304,35 +202,6 @@ judgment_parameters() {
     esac
     shift
   done
-  if ((INSTALL+INSTALL_GEODATA+HELP+CHECK+REMOVE==0)); then
-    INSTALL='1'
-  elif ((INSTALL+INSTALL_GEODATA+HELP+CHECK+REMOVE>1)); then
-    echo 'You can only choose one action.'
-    exit 1
-  fi
-  if [[ "$INSTALL" -eq '1' ]] && ((temp_version+local_install+REINSTALL+BETA>1)); then
-    echo "--version,--reinstall,--beta and --local can't be used together."
-    exit 1
-  fi
-}
-
-check_install_user() {
-  if [[ -z "$INSTALL_USER" ]]; then
-    if [[ -f '/usr/local/bin/xray' ]]; then
-      INSTALL_USER="$(grep '^[ '$'\t]*User[ '$'\t]*=' /etc/systemd/system/xray.service | tail -n 1 | awk -F = '{print $2}' | awk '{print $1}')"
-      if [[ -z "$INSTALL_USER" ]]; then
-        INSTALL_USER='root'
-      fi
-    else
-      INSTALL_USER='nobody'
-    fi
-  fi
-  if ! id $INSTALL_USER > /dev/null 2>&1; then
-    echo "the user '$INSTALL_USER' is not effective"
-    exit 1
-  fi
-  INSTALL_USER_UID="$(id -u $INSTALL_USER)"
-  INSTALL_USER_GID="$(id -g $INSTALL_USER)"
 }
 
 install_software() {
@@ -348,88 +217,58 @@ install_software() {
 }
 
 get_current_version() {
-  # Get the CURRENT_VERSION
-  if [[ -f '/usr/local/bin/xray' ]]; then
-    CURRENT_VERSION="$(/usr/local/bin/xray -version | awk 'NR==1 {print $2}')"
-    CURRENT_VERSION="v${CURRENT_VERSION#v}"
+  if /usr/local/bin/v2ray -version >/dev/null 2>&1;then
+    VERSION="$(/usr/local/bin/v2ray -version | awk 'NR==1 {print $2}')"
   else
-    CURRENT_VERSION=""
+    VERSION="$(/usr/local/bin/v2ray version | awk 'NR==1 {print $2}')"
   fi
+  CURRENT_VERSION="v${VERSION#v}"
 }
 
-get_latest_version() {
-  # Get Xray latest release version number
-  local tmp_file
-  tmp_file="$(mktemp)"
-  if ! curl -x "${PROXY}" -sS -H "Accept: application/vnd.github.v3+json" -o "$tmp_file" 'https://api.github.com/repos/XTLS/Xray-core/releases/latest'; then
-    "rm" "$tmp_file"
+get_version() {
+  # 0: Install or update V2Ray.
+  # 1: Installed or no new version of V2Ray.
+  # 2: Install the specified version of V2Ray.
+  if [[ -n "$VERSION" ]]; then
+    RELEASE_VERSION="v${VERSION#v}"
+    return 2
+  fi
+  # Determine the version number for V2Ray installed from a local file
+  if [[ -f '/usr/local/bin/v2ray' ]]; then
+    get_current_version
+    if [[ "$LOCAL_INSTALL" -eq '1' ]]; then
+      RELEASE_VERSION="$CURRENT_VERSION"
+      return
+    fi
+  fi
+  # Get V2Ray release version number
+  TMP_FILE="$(mktemp)"
+  if ! curl -x "${PROXY}" -sS -H "Accept: application/vnd.github.v3+json" -o "$TMP_FILE" 'https://api.github.com/repos/v2fly/v2ray-core/releases/latest'; then
+    "rm" "$TMP_FILE"
     echo 'error: Failed to get release list, please check your network.'
     exit 1
   fi
-  RELEASE_LATEST="$(sed 'y/,/\n/' "$tmp_file" | grep 'tag_name' | awk -F '"' '{print $4}')"
-  if [[ -z "$RELEASE_LATEST" ]]; then
-    if grep -q "API rate limit exceeded" "$tmp_file"; then
-      echo "error: github API rate limit exceeded"
-    else
-      echo "error: Failed to get the latest release version."
-      echo "Welcome bug report:https://github.com/XTLS/Xray-install/issues"
-    fi
-    "rm" "$tmp_file"
-    exit 1
-  fi
-  "rm" "$tmp_file"
-  RELEASE_LATEST="v${RELEASE_LATEST#v}"
-  if ! curl -x "${PROXY}" -sS -H "Accept: application/vnd.github.v3+json" -o "$tmp_file" 'https://api.github.com/repos/XTLS/Xray-core/releases'; then
-    "rm" "$tmp_file"
-    echo 'error: Failed to get release list, please check your network.'
-    exit 1
-  fi
-  local releases_list
-  releases_list=($(sed 'y/,/\n/' "$tmp_file" | grep 'tag_name' | awk -F '"' '{print $4}'))
-  if [[ "${#releases_list[@]}" -eq '0' ]]; then
-    if grep -q "API rate limit exceeded" "$tmp_file"; then
-      echo "error: github API rate limit exceeded"
-    else
-      echo "error: Failed to get the latest release version."
-      echo "Welcome bug report:https://github.com/XTLS/Xray-install/issues"
-    fi
-    "rm" "$tmp_file"
-    exit 1
-  fi
-  local i
-  for i in ${!releases_list[@]}
-  do
-    releases_list[$i]="v${releases_list[$i]#v}"
-    grep -q "https://github.com/XTLS/Xray-core/releases/download/${releases_list[$i]}/Xray-linux-$MACHINE.zip" "$tmp_file" && break
-  done
-  "rm" "$tmp_file"
-  PRE_RELEASE_LATEST="${releases_list[$i]}"
-}
-
-version_gt() {
-  # compare two version
-  # 0: $1 >  $2
-  # 1: $1 <= $2
-
-  if [[ "$1" != "$2" ]]; then
-    local temp_1_version_number="${1#v}"
-    local temp_1_major_version_number="${temp_1_version_number%%.*}"
-    local temp_1_minor_version_number
-    temp_1_minor_version_number="$(echo "$temp_1_version_number" | awk -F '.' '{print $2}')"
-    local temp_1_minimunm_version_number="${temp_1_version_number##*.}"
+  RELEASE_LATEST="$(sed 'y/,/\n/' "$TMP_FILE" | grep 'tag_name' | awk -F '"' '{print $4}')"
+  "rm" "$TMP_FILE"
+  RELEASE_VERSION="v${RELEASE_LATEST#v}"
+  # Compare V2Ray version numbers
+  if [[ "$RELEASE_VERSION" != "$CURRENT_VERSION" ]]; then
+    RELEASE_VERSIONSION_NUMBER="${RELEASE_VERSION#v}"
+    RELEASE_MAJOR_VERSION_NUMBER="${RELEASE_VERSIONSION_NUMBER%%.*}"
+    RELEASE_MINOR_VERSION_NUMBER="$(echo "$RELEASE_VERSIONSION_NUMBER" | awk -F '.' '{print $2}')"
+    RELEASE_MINIMUM_VERSION_NUMBER="${RELEASE_VERSIONSION_NUMBER##*.}"
     # shellcheck disable=SC2001
-    local temp_2_version_number="${2#v}"
-    local temp_2_major_version_number="${temp_2_version_number%%.*}"
-    local temp_2_minor_version_number
-    temp_2_minor_version_number="$(echo "$temp_2_version_number" | awk -F '.' '{print $2}')"
-    local temp_2_minimunm_version_number="${temp_2_version_number##*.}"
-    if [[ "$temp_1_major_version_number" -gt "$temp_2_major_version_number" ]]; then
+    CURRENT_VERSION_NUMBER="$(echo "${CURRENT_VERSION#v}" | sed 's/-.*//')"
+    CURRENT_MAJOR_VERSION_NUMBER="${CURRENT_VERSION_NUMBER%%.*}"
+    CURRENT_MINOR_VERSION_NUMBER="$(echo "$CURRENT_VERSION_NUMBER" | awk -F '.' '{print $2}')"
+    CURRENT_MINIMUM_VERSION_NUMBER="${CURRENT_VERSION_NUMBER##*.}"
+    if [[ "$RELEASE_MAJOR_VERSION_NUMBER" -gt "$CURRENT_MAJOR_VERSION_NUMBER" ]]; then
       return 0
-    elif [[ "$temp_1_major_version_number" -eq "$temp_2_major_version_number" ]]; then
-      if [[ "$temp_1_minor_version_number" -gt "$temp_2_minor_version_number" ]]; then
+    elif [[ "$RELEASE_MAJOR_VERSION_NUMBER" -eq "$CURRENT_MAJOR_VERSION_NUMBER" ]]; then
+      if [[ "$RELEASE_MINOR_VERSION_NUMBER" -gt "$CURRENT_MINOR_VERSION_NUMBER" ]]; then
         return 0
-      elif [[ "$temp_1_minor_version_number" -eq "$temp_2_minor_version_number" ]]; then
-        if [[ "$temp_1_minimunm_version_number" -gt "$temp_2_minimunm_version_number" ]]; then
+      elif [[ "$RELEASE_MINOR_VERSION_NUMBER" -eq "$CURRENT_MINOR_VERSION_NUMBER" ]]; then
+        if [[ "$RELEASE_MINIMUM_VERSION_NUMBER" -gt "$CURRENT_MINIMUM_VERSION_NUMBER" ]]; then
           return 0
         else
           return 1
@@ -440,20 +279,19 @@ version_gt() {
     else
       return 1
     fi
-  elif [[ "$1" == "$2" ]]; then
+  elif [[ "$RELEASE_VERSION" == "$CURRENT_VERSION" ]]; then
     return 1
   fi
 }
 
-download_xray() {
-  DOWNLOAD_LINK="https://github.com/XTLS/Xray-core/releases/download/$INSTALL_VERSION/Xray-linux-$MACHINE.zip"
-  echo "Downloading Xray archive: $DOWNLOAD_LINK"
+download_v2ray() {
+  DOWNLOAD_LINK="https://github.com/v2fly/v2ray-core/releases/download/$RELEASE_VERSION/v2ray-linux-$MACHINE.zip"
+  echo "Downloading V2Ray archive: $DOWNLOAD_LINK"
   if ! curl -x "${PROXY}" -R -H 'Cache-Control: no-cache' -o "$ZIP_FILE" "$DOWNLOAD_LINK"; then
     echo 'error: Download failed! Please check your network or try again.'
     return 1
   fi
-  return 0
-  echo "Downloading verification file for Xray archive: $DOWNLOAD_LINK.dgst"
+  echo "Downloading verification file for V2Ray archive: $DOWNLOAD_LINK.dgst"
   if ! curl -x "${PROXY}" -sSR -H 'Cache-Control: no-cache' -o "$ZIP_FILE.dgst" "$DOWNLOAD_LINK.dgst"; then
     echo 'error: Download failed! Please check your network or try again.'
     return 1
@@ -463,7 +301,7 @@ download_xray() {
     return 1
   fi
 
-  # Verification of Xray archive
+  # Verification of V2Ray archive
   for LISTSUM in 'md5' 'sha1' 'sha256' 'sha512'; do
     SUM="$(${LISTSUM}sum "$ZIP_FILE" | sed 's/ .*//')"
     CHECKSUM="$(grep ${LISTSUM^^} "$ZIP_FILE".dgst | grep "$SUM" -o -a | uniq)"
@@ -476,35 +314,41 @@ download_xray() {
 
 decompression() {
   if ! unzip -q "$1" -d "$TMP_DIRECTORY"; then
-    echo 'error: Xray decompression failed.'
+    echo 'error: V2Ray decompression failed.'
     "rm" -r "$TMP_DIRECTORY"
     echo "removed: $TMP_DIRECTORY"
     exit 1
   fi
-  echo "info: Extract the Xray package to $TMP_DIRECTORY and prepare it for installation."
+  echo "info: Extract the V2Ray package to $TMP_DIRECTORY and prepare it for installation."
 }
 
 install_file() {
   NAME="$1"
-  if [[ "$NAME" == 'xray' ]]; then
+  if [[ "$NAME" == 'v2ray' ]] || [[ "$NAME" == 'v2ctl' ]]; then
     install -m 755 "${TMP_DIRECTORY}/$NAME" "/usr/local/bin/$NAME"
   elif [[ "$NAME" == 'geoip.dat' ]] || [[ "$NAME" == 'geosite.dat' ]]; then
     install -m 644 "${TMP_DIRECTORY}/$NAME" "${DAT_PATH}/$NAME"
   fi
 }
 
-install_xray() {
-  # Install Xray binary to /usr/local/bin/ and $DAT_PATH
-  install_file xray
+install_v2ray() {
+  # Install V2Ray binary to /usr/local/bin/ and $DAT_PATH
+  install_file v2ray
+  if [[ -f "${TMP_DIRECTORY}/v2ctl" ]]; then
+    install_file v2ctl
+  else
+    if [[ -f '/usr/local/bin/v2ctl' ]]; then
+      rm '/usr/local/bin/v2ctl'
+    fi
+  fi
+  install -d "$DAT_PATH"
   # If the file exists, geoip.dat and geosite.dat will not be installed or updated
-  if [[ "$NO_GEODATA" -eq '0' ]] && [[ ! -f "${DAT_PATH}/.undat" ]]; then
-    install -d "$DAT_PATH"
+  if [[ ! -f "${DAT_PATH}/.undat" ]]; then
     install_file geoip.dat
     install_file geosite.dat
-    GEODATA='1'
   fi
 
-  # Install Xray configuration file to $JSON_PATH
+  # Install V2Ray configuration file to $JSON_PATH
   # shellcheck disable=SC2153
   if [[ -z "$JSONS_PATH" ]] && [[ ! -d "$JSON_PATH" ]]; then
     install -d "$JSON_PATH"
@@ -512,7 +356,7 @@ install_xray() {
     CONFIG_NEW='1'
   fi
 
-  # Install Xray configuration file to $JSONS_PATH
+  # Install V2Ray configuration file to $JSONS_PATH
   if [[ -n "$JSONS_PATH" ]] && [[ ! -d "$JSONS_PATH" ]]; then
     install -d "$JSONS_PATH"
     for BASE in 00_log 01_api 02_dns 03_routing 04_policy 05_inbounds 06_outbounds 07_transport 08_stats 09_reverse; do
@@ -521,260 +365,165 @@ install_xray() {
     CONFDIR='1'
   fi
 
-  # Used to store Xray log files
-  if [[ "$NO_LOGFILES" -eq '0' ]]; then
-    if [[ ! -d '/var/log/xray/' ]]; then
-      install -d -m 700 -o "$INSTALL_USER_UID" -g "$INSTALL_USER_GID" /var/log/xray/
-      install -m 600 -o "$INSTALL_USER_UID" -g "$INSTALL_USER_GID" /dev/null /var/log/xray/access.log
-      install -m 600 -o "$INSTALL_USER_UID" -g "$INSTALL_USER_GID" /dev/null /var/log/xray/error.log
-      LOG='1'
+  # Used to store V2Ray log files
+  if [[ ! -d '/var/log/v2ray/' ]]; then
+    if id nobody | grep -qw 'nogroup'; then
+      install -d -m 700 -o nobody -g nogroup /var/log/v2ray/
+      install -m 600 -o nobody -g nogroup /dev/null /var/log/v2ray/access.log
+      install -m 600 -o nobody -g nogroup /dev/null /var/log/v2ray/error.log
     else
-      chown -R "$INSTALL_USER_UID:$INSTALL_USER_GID" /var/log/xray/
+      install -d -m 700 -o nobody -g nobody /var/log/v2ray/
+      install -m 600 -o nobody -g nobody /dev/null /var/log/v2ray/access.log
+      install -m 600 -o nobody -g nobody /dev/null /var/log/v2ray/error.log
     fi
+    LOG='1'
   fi
 }
 
 install_startup_service_file() {
-  mkdir -p '/etc/systemd/system/xray.service.d'
-  mkdir -p '/etc/systemd/system/xray@.service.d/'
-  local temp_CapabilityBoundingSet="CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE"
-  local temp_AmbientCapabilities="AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE"
-  local temp_NoNewPrivileges="NoNewPrivileges=true"
-  if [[ "$INSTALL_USER_UID" -eq '0' ]]; then
-    temp_CapabilityBoundingSet="#${temp_CapabilityBoundingSet}"
-    temp_AmbientCapabilities="#${temp_AmbientCapabilities}"
-    temp_NoNewPrivileges="#${temp_NoNewPrivileges}"
-  fi
-cat > /etc/systemd/system/xray.service << EOF
-[Unit]
-Description=Xray Service
-Documentation=https://github.com/xtls
-After=network.target nss-lookup.target
-
-[Service]
-User=$INSTALL_USER
-${temp_CapabilityBoundingSet}
-${temp_AmbientCapabilities}
-${temp_NoNewPrivileges}
-ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/config.json
-Restart=on-failure
-RestartPreventExitStatus=23
-LimitNPROC=10000
-LimitNOFILE=1000000
-
-[Install]
-WantedBy=multi-user.target
-EOF
-cat > /etc/systemd/system/xray@.service <<EOF
-[Unit]
-Description=Xray Service
-Documentation=https://github.com/xtls
-After=network.target nss-lookup.target
-
-[Service]
-User=$INSTALL_USER
-${temp_CapabilityBoundingSet}
-${temp_AmbientCapabilities}
-${temp_NoNewPrivileges}
-ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/%i.json
-Restart=on-failure
-RestartPreventExitStatus=23
-LimitNPROC=10000
-LimitNOFILE=1000000
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  chmod 644 /etc/systemd/system/xray.service /etc/systemd/system/xray@.service
-  if [[ -n "$JSONS_PATH" ]]; then
-    "rm" '/etc/systemd/system/xray.service.d/10-donot_touch_single_conf.conf' \
-      '/etc/systemd/system/xray@.service.d/10-donot_touch_single_conf.conf'
-    echo "# In case you have a good reason to do so, duplicate this file in the same directory and make your customizes there.
-# Or all changes you made will be lost!  # Refer: https://www.freedesktop.org/software/systemd/man/systemd.unit.html
-[Service]
-ExecStart=
-ExecStart=/usr/local/bin/xray run -confdir $JSONS_PATH" |
-      tee '/etc/systemd/system/xray.service.d/10-donot_touch_multi_conf.conf' > \
-        '/etc/systemd/system/xray@.service.d/10-donot_touch_multi_conf.conf'
+  get_current_version
+  if [[ "$(echo "${CURRENT_VERSION#v}" | sed 's/-.*//' | awk -F'.' '{print $1}')" -gt "4" ]];then
+    START_COMMAND="/usr/local/bin/v2ray run"
   else
-    "rm" '/etc/systemd/system/xray.service.d/10-donot_touch_multi_conf.conf' \
-      '/etc/systemd/system/xray@.service.d/10-donot_touch_multi_conf.conf'
+    START_COMMAND="/usr/local/bin/v2ray"
+  fi
+  install -m 644 "${TMP_DIRECTORY}/systemd/system/v2ray.service" /etc/systemd/system/v2ray.service
+  install -m 644 "${TMP_DIRECTORY}/systemd/system/v2ray@.service" /etc/systemd/system/v2ray@.service
+  mkdir -p '/etc/systemd/system/v2ray.service.d'
+  mkdir -p '/etc/systemd/system/v2ray@.service.d/'
+  if [[ -n "$JSONS_PATH" ]]; then
+    "rm" -f '/etc/systemd/system/v2ray.service.d/10-donot_touch_single_conf.conf' \
+      '/etc/systemd/system/v2ray@.service.d/10-donot_touch_single_conf.conf'
     echo "# In case you have a good reason to do so, duplicate this file in the same directory and make your customizes there.
 # Or all changes you made will be lost!  # Refer: https://www.freedesktop.org/software/systemd/man/systemd.unit.html
 [Service]
 ExecStart=
-ExecStart=/usr/local/bin/xray run -config ${JSON_PATH}/config.json" > \
-      '/etc/systemd/system/xray.service.d/10-donot_touch_single_conf.conf'
+ExecStart=${START_COMMAND} -confdir $JSONS_PATH" |
+      tee '/etc/systemd/system/v2ray.service.d/10-donot_touch_multi_conf.conf' > \
+        '/etc/systemd/system/v2ray@.service.d/10-donot_touch_multi_conf.conf'
+  else
+    "rm" -f '/etc/systemd/system/v2ray.service.d/10-donot_touch_multi_conf.conf' \
+      '/etc/systemd/system/v2ray@.service.d/10-donot_touch_multi_conf.conf'
     echo "# In case you have a good reason to do so, duplicate this file in the same directory and make your customizes there.
 # Or all changes you made will be lost!  # Refer: https://www.freedesktop.org/software/systemd/man/systemd.unit.html
 [Service]
 ExecStart=
-ExecStart=/usr/local/bin/xray run -config ${JSON_PATH}/%i.json" > \
-      '/etc/systemd/system/xray@.service.d/10-donot_touch_single_conf.conf'
+ExecStart=${START_COMMAND} -config ${JSON_PATH}/config.json" > \
+      '/etc/systemd/system/v2ray.service.d/10-donot_touch_single_conf.conf'
+    echo "# In case you have a good reason to do so, duplicate this file in the same directory and make your customizes there.
+# Or all changes you made will be lost!  # Refer: https://www.freedesktop.org/software/systemd/man/systemd.unit.html
+[Service]
+ExecStart=
+ExecStart=${START_COMMAND} -config ${JSON_PATH}/%i.json" > \
+      '/etc/systemd/system/v2ray@.service.d/10-donot_touch_single_conf.conf'
   fi
   echo "info: Systemd service files have been installed successfully!"
-  echo "${red}warning: ${green}The following are the actual parameters for the xray service startup."
+  echo "${red}warning: ${green}The following are the actual parameters for the v2ray service startup."
   echo "${red}warning: ${green}Please make sure the configuration file path is correctly set.${reset}"
-  systemd_cat_config /etc/systemd/system/xray.service
+  systemd_cat_config /etc/systemd/system/v2ray.service
   # shellcheck disable=SC2154
   if [[ x"${check_all_service_files:0:1}" = x'y' ]]; then
     echo
     echo
-    systemd_cat_config /etc/systemd/system/xray@.service
+    systemd_cat_config /etc/systemd/system/v2ray@.service
   fi
   systemctl daemon-reload
   SYSTEMD='1'
 }
 
-start_xray() {
-  if [[ -f '/etc/systemd/system/xray.service' ]]; then
-    systemctl start "${XRAY_CUSTOMIZE:-xray}"
-    sleep 1s
-    if systemctl -q is-active "${XRAY_CUSTOMIZE:-xray}"; then
-      echo 'info: Start the Xray service.'
+start_v2ray() {
+  if [[ -f '/etc/systemd/system/v2ray.service' ]]; then
+    if systemctl start "${V2RAY_CUSTOMIZE:-v2ray}"; then
+      echo 'info: Start the V2Ray service.'
     else
-      echo 'error: Failed to start Xray service.'
+      echo 'error: Failed to start V2Ray service.'
       exit 1
     fi
   fi
 }
 
-stop_xray() {
-  XRAY_CUSTOMIZE="$(systemctl list-units | grep 'xray@' | awk -F ' ' '{print $1}')"
-  if [[ -z "$XRAY_CUSTOMIZE" ]]; then
-    local xray_daemon_to_stop='xray.service'
+stop_v2ray() {
+  V2RAY_CUSTOMIZE="$(systemctl list-units | grep 'v2ray@' | awk -F ' ' '{print $1}')"
+  if [[ -z "$V2RAY_CUSTOMIZE" ]]; then
+    local v2ray_daemon_to_stop='v2ray.service'
   else
-    local xray_daemon_to_stop="$XRAY_CUSTOMIZE"
+    local v2ray_daemon_to_stop="$V2RAY_CUSTOMIZE"
   fi
-  if ! systemctl stop "$xray_daemon_to_stop"; then
-    echo 'error: Stopping the Xray service failed.'
+  if ! systemctl stop "$v2ray_daemon_to_stop"; then
+    echo 'error: Stopping the V2Ray service failed.'
     exit 1
   fi
-  echo 'info: Stop the Xray service.'
-}
-
-install_geodata() {
-  download_geodata() {
-    if ! curl -x "${PROXY}" -R -H 'Cache-Control: no-cache' -o "${dir_tmp}/${2}" "${1}"; then
-      echo 'error: Download failed! Please check your network or try again.'
-      exit 1
-    fi
-    if ! curl -x "${PROXY}" -R -H 'Cache-Control: no-cache' -o "${dir_tmp}/${2}.sha256sum" "${1}.sha256sum"; then
-      echo 'error: Download failed! Please check your network or try again.'
-      exit 1
-    fi
-  }
-  local download_link_geoip="https://github.com/v2fly/geoip/releases/latest/download/geoip.dat"
-  local download_link_geosite="https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat"
-  local file_ip='geoip.dat'
-  local file_dlc='dlc.dat'
-  local file_site='geosite.dat'
-  local dir_tmp
-  dir_tmp="$(mktemp -d)"
-  [[ "$XRAY_IS_INSTALLED_BEFORE_RUNNING_SCRIPT" -eq '0' ]] && echo "warning: Xray was not installed"
-  download_geodata $download_link_geoip $file_ip
-  download_geodata $download_link_geosite $file_dlc
-  cd "${dir_tmp}" || exit
-  for i in "${dir_tmp}"/*.sha256sum; do
-    if ! sha256sum -c "${i}"; then
-      echo 'error: Check failed! Please check your network or try again.'
-      exit 1
-    fi
-  done
-  cd - > /dev/null
-  install -d "$DAT_PATH"
-  install -m 644 "${dir_tmp}"/${file_dlc} "${DAT_PATH}"/${file_site}
-  install -m 644 "${dir_tmp}"/${file_ip} "${DAT_PATH}"/${file_ip}
-  rm -r "${dir_tmp}"
-  exit 0
+  echo 'info: Stop the V2Ray service.'
 }
 
 check_update() {
-  if [[ "$XRAY_IS_INSTALLED_BEFORE_RUNNING_SCRIPT" -eq '1' ]]; then
-    get_current_version
-    echo "info: The current version of Xray is $CURRENT_VERSION ."
+  if [[ -f '/etc/systemd/system/v2ray.service' ]]; then
+    get_version
+    local get_ver_exit_code=$?
+    if [[ "$get_ver_exit_code" -eq '0' ]]; then
+      echo "info: Found the latest release of V2Ray $RELEASE_VERSION . (Current release: $CURRENT_VERSION)"
+    elif [[ "$get_ver_exit_code" -eq '1' ]]; then
+      echo "info: No new version. The current version of V2Ray is $CURRENT_VERSION ."
+    fi
+    exit 0
   else
-    echo 'warning: Xray is not installed.'
+    echo 'error: V2Ray is not installed.'
+    exit 1
   fi
-  get_latest_version
-  echo "info: The latest release version of Xray is $RELEASE_LATEST ."
-  echo "info: The latest pre-release/release version of Xray is $PRE_RELEASE_LATEST ."
-  exit 0
 }
 
-remove_xray() {
-  if systemctl list-unit-files | grep -qw 'xray'; then
-    if [[ -n "$(pidof xray)" ]]; then
-      stop_xray
+remove_v2ray() {
+  if systemctl list-unit-files | grep -qw 'v2ray'; then
+    if [[ -n "$(pidof v2ray)" ]]; then
+      stop_v2ray
     fi
-    local delete_files=('/usr/local/bin/xray' '/etc/systemd/system/xray.service' '/etc/systemd/system/xray@.service' '/etc/systemd/system/xray.service.d' '/etc/systemd/system/xray@.service.d')
-    [[ -d "$DAT_PATH" ]] && delete_files+=("$DAT_PATH")
-    if [[ "$PURGE" -eq '1' ]]; then
-      if [[ -z "$JSONS_PATH" ]]; then
-        delete_files+=("$JSON_PATH")
-      else
-        delete_files+=("$JSONS_PATH")
-      fi
-      [[ -d '/var/log/xray' ]] && delete_files+=('/var/log/xray')
-    fi
-    systemctl disable xray
-    if ! ("rm" -r "${delete_files[@]}"); then
-      echo 'error: Failed to remove Xray.'
+    if ! ("rm" -r '/usr/local/bin/v2ray' \
+      "$DAT_PATH" \
+      '/etc/systemd/system/v2ray.service' \
+      '/etc/systemd/system/v2ray@.service' \
+      '/etc/systemd/system/v2ray.service.d' \
+      '/etc/systemd/system/v2ray@.service.d'); then
+      echo 'error: Failed to remove V2Ray.'
       exit 1
     else
-      for i in ${!delete_files[@]}
-      do
-        echo "removed: ${delete_files[$i]}"
-      done
-      systemctl daemon-reload
+      echo 'removed: /usr/local/bin/v2ray'
+      if [[ -f '/usr/local/bin/v2ctl' ]]; then
+        rm '/usr/local/bin/v2ctl'
+        echo 'removed: /usr/local/bin/v2ctl'
+      fi
+      echo "removed: $DAT_PATH"
+      echo 'removed: /etc/systemd/system/v2ray.service'
+      echo 'removed: /etc/systemd/system/v2ray@.service'
+      echo 'removed: /etc/systemd/system/v2ray.service.d'
+      echo 'removed: /etc/systemd/system/v2ray@.service.d'
+      echo 'Please execute the command: systemctl disable v2ray'
       echo "You may need to execute a command to remove dependent software: $PACKAGE_MANAGEMENT_REMOVE curl unzip"
-      echo 'info: Xray has been removed.'
-      if [[ "$PURGE" -eq '0' ]]; then
-        echo 'info: If necessary, manually delete the configuration and log files.'
-        if [[ -n "$JSONS_PATH" ]]; then
-          echo "info: e.g., $JSONS_PATH and /var/log/xray/ ..."
-        else
-          echo "info: e.g., $JSON_PATH and /var/log/xray/ ..."
-        fi
+      echo 'info: V2Ray has been removed.'
+      echo 'info: If necessary, manually delete the configuration and log files.'
+      if [[ -n "$JSONS_PATH" ]]; then
+        echo "info: e.g., $JSONS_PATH and /var/log/v2ray/ ..."
+      else
+        echo "info: e.g., $JSON_PATH and /var/log/v2ray/ ..."
       fi
       exit 0
     fi
   else
-    echo 'error: Xray is not installed.'
+    echo 'error: V2Ray is not installed.'
     exit 1
   fi
 }
 
 # Explanation of parameters in the script
 show_help() {
-  echo "usage: $0 ACTION [OPTION]..."
-  echo
-  echo 'ACTION:'
-  echo '  install                   Install/Update Xray'
-  echo '  install-geodata           Install/Update geoip.dat and geosite.dat only'
-  echo '  remove                    Remove Xray'
-  echo '  help                      Show help'
-  echo '  check                     Check if Xray can be updated'
-  echo 'If no action is specified, then install will be selected'
-  echo
-  echo 'OPTION:'
-  echo '  install:'
-  echo '    --version                 Install the specified version of Xray, e.g., --version v1.0.0'
-  echo '    -f, --force               Force install even though the versions are same'
-  echo '    --beta                    Install the pre-release version if it is exist'
-  echo '    -l, --local               Install Xray from a local file'
-  echo '    -p, --proxy               Download through a proxy server, e.g., -p http://127.0.0.1:8118 or -p socks5://127.0.0.1:1080'
-  echo '    -u, --install-user        Install Xray in specified user, e.g, -u root'
-  echo '    --reinstall               Reinstall current Xray version'
-  echo "    --no-update-service       Don't change service files if they are exist"
-  echo "    --without-geodata         Don't install/update geoip.dat and geosite.dat"
-  echo "    --without-logfiles        Don't install /var/log/xray"
-  echo '  install-geodata:'
-  echo '    -p, --proxy               Download through a proxy server'
-  echo '  remove:'
-  echo '    --purge                   Remove all the Xray files, include logs, configs, etc'
-  echo '  check:'
-  echo '    -p, --proxy               Check new version through a proxy server'
+  echo "usage: $0 [--remove | --version number | -c | -f | -h | -l | -p]"
+  echo '  [-p address] [--version number | -c | -f]'
+  echo '  --remove        Remove V2Ray'
+  echo '  --version       Install the specified version of V2Ray, e.g., --version v4.18.0'
+  echo '  -c, --check     Check if V2Ray can be updated'
+  echo '  -f, --force     Force installation of the latest version of V2Ray'
+  echo '  -h, --help      Show help'
+  echo '  -l, --local     Install V2Ray from a local file'
+  echo '  -p, --proxy     Download through a proxy server, e.g., -p http://127.0.0.1:8118 or -p socks5://127.0.0.1:1080'
   exit 0
 }
 
@@ -792,76 +541,55 @@ main() {
   # Parameter information
   [[ "$HELP" -eq '1' ]] && show_help
   [[ "$CHECK" -eq '1' ]] && check_update
-  [[ "$REMOVE" -eq '1' ]] && remove_xray
-  [[ "$INSTALL_GEODATA" -eq '1' ]] && install_geodata
-
-  # Check if the user is effective
-  check_install_user
+  [[ "$REMOVE" -eq '1' ]] && remove_v2ray
 
   # Two very important variables
   TMP_DIRECTORY="$(mktemp -d)"
-  ZIP_FILE="${TMP_DIRECTORY}/Xray-linux-$MACHINE.zip"
+  ZIP_FILE="${TMP_DIRECTORY}/v2ray-linux-$MACHINE.zip"
 
-  # Install Xray from a local file, but still need to make sure the network is available
-  if [[ -n "$LOCAL_FILE" ]]; then
-    echo 'warn: Install Xray from a local file, but still need to make sure the network is available.'
+  # Install V2Ray from a local file, but still need to make sure the network is available
+  if [[ "$LOCAL_INSTALL" -eq '1' ]]; then
+    echo 'warn: Install V2Ray from a local file, but still need to make sure the network is available.'
     echo -n 'warn: Please make sure the file is valid because we cannot confirm it. (Press any key) ...'
     read -r
     install_software 'unzip' 'unzip'
     decompression "$LOCAL_FILE"
   else
-    get_current_version
-    if [[ "$REINSTALL" -eq '1' ]]; then
-      if [[ -z "$CURRENT_VERSION" ]]; then
-        echo "error: Xray is not installed"
+    # Normal way
+    install_software 'curl' 'curl'
+    get_version
+    NUMBER="$?"
+    if [[ "$NUMBER" -eq '0' ]] || [[ "$FORCE" -eq '1' ]] || [[ "$NUMBER" -eq 2 ]]; then
+      echo "info: Installing V2Ray $RELEASE_VERSION for $(uname -m)"
+      download_v2ray
+      if [[ "$?" -eq '1' ]]; then
+        "rm" -r "$TMP_DIRECTORY"
+        echo "removed: $TMP_DIRECTORY"
         exit 1
       fi
-      INSTALL_VERSION="$CURRENT_VERSION"
-      echo "info: Reinstalling Xray $CURRENT_VERSION"
-    elif [[ -n "$SPECIFIED_VERSION" ]]; then
-      SPECIFIED_VERSION="v${SPECIFIED_VERSION#v}"
-      if [[ "$CURRENT_VERSION" == "$SPECIFIED_VERSION" ]] && [[ "$FORCE" -eq '0' ]]; then
-        echo "info: The current version is same as the specified version. The version is $CURRENT_VERSION ."
-        exit 0
-      fi
-      INSTALL_VERSION="$SPECIFIED_VERSION"
-      echo "info: Installing specified Xray version $INSTALL_VERSION for $(uname -m)"
-    else
-      install_software 'curl' 'curl'
-      get_latest_version
-      if [[ "$BETA" -eq '0' ]]; then
-        INSTALL_VERSION="$RELEASE_LATEST"
-      else
-        INSTALL_VERSION="$PRE_RELEASE_LATEST"
-      fi
-      if ! version_gt "$INSTALL_VERSION" "$CURRENT_VERSION" && [[ "$FORCE" -eq '0' ]]; then
-        echo "info: No new version. The current version of Xray is $CURRENT_VERSION ."
-        exit 0
-      fi
-      echo "info: Installing Xray $INSTALL_VERSION for $(uname -m)"
+      install_software 'unzip' 'unzip'
+      decompression "$ZIP_FILE"
+    elif [[ "$NUMBER" -eq '1' ]]; then
+      echo "info: No new version. The current version of V2Ray is $CURRENT_VERSION ."
+      exit 0
     fi
-    install_software 'curl' 'curl'
-    install_software 'unzip' 'unzip'
-    if ! download_xray; then
-      "rm" -r "$TMP_DIRECTORY"
-      echo "removed: $TMP_DIRECTORY"
-      exit 1
-    fi
-    decompression "$ZIP_FILE"
   fi
 
-  # Determine if Xray is running
-  if systemctl list-unit-files | grep -qw 'xray'; then
-    if [[ -n "$(pidof xray)" ]]; then
-      stop_xray
-      XRAY_RUNNING='1'
+  # Determine if V2Ray is running
+  if systemctl list-unit-files | grep -qw 'v2ray'; then
+    if [[ -n "$(pidof v2ray)" ]]; then
+      stop_v2ray
+      V2RAY_RUNNING='1'
     fi
   fi
-  install_xray
-  ([[ "$N_UP_SERVICE" -eq '1' ]] && [[ -f '/etc/systemd/system/xray.service' ]]) || install_startup_service_file
-  echo 'installed: /usr/local/bin/xray'
+  install_v2ray
+  install_startup_service_file
+  echo 'installed: /usr/local/bin/v2ray'
+  if [[ -f '/usr/local/bin/v2ctl' ]]; then
+    echo 'installed: /usr/local/bin/v2ctl'
+  fi
   # If the file exists, the content output of installing or updating geoip.dat and geosite.dat will not be displayed
-  if [[ "$GEODATA" -eq '1' ]]; then
+  if [[ ! -f "${DAT_PATH}/.undat" ]]; then
     echo "installed: ${DAT_PATH}/geoip.dat"
     echo "installed: ${DAT_PATH}/geosite.dat"
   fi
@@ -881,30 +609,25 @@ main() {
     echo "installed: ${JSON_PATH}/09_reverse.json"
   fi
   if [[ "$LOG" -eq '1' ]]; then
-    echo 'installed: /var/log/xray/'
-    echo 'installed: /var/log/xray/access.log'
-    echo 'installed: /var/log/xray/error.log'
+    echo 'installed: /var/log/v2ray/'
+    echo 'installed: /var/log/v2ray/access.log'
+    echo 'installed: /var/log/v2ray/error.log'
   fi
   if [[ "$SYSTEMD" -eq '1' ]]; then
-    echo 'installed: /etc/systemd/system/xray.service'
-    echo 'installed: /etc/systemd/system/xray@.service'
+    echo 'installed: /etc/systemd/system/v2ray.service'
+    echo 'installed: /etc/systemd/system/v2ray@.service'
   fi
   "rm" -r "$TMP_DIRECTORY"
   echo "removed: $TMP_DIRECTORY"
-  get_current_version
-  echo "info: Xray $CURRENT_VERSION is installed."
+  if [[ "$LOCAL_INSTALL" -eq '1' ]]; then
+    get_version
+  fi
+  echo "info: V2Ray $RELEASE_VERSION is installed."
   echo "You may need to execute a command to remove dependent software: $PACKAGE_MANAGEMENT_REMOVE curl unzip"
-  if [[ "$XRAY_IS_INSTALLED_BEFORE_RUNNING_SCRIPT" -eq '1' ]] && [[ "$FORCE" -eq '0' ]] && [[ "$REINSTALL" -eq '0' ]]; then
-    [[ "$XRAY_RUNNING" -eq '1' ]] && start_xray
+  if [[ "$V2RAY_RUNNING" -eq '1' ]]; then
+    start_v2ray
   else
-    systemctl start xray
-    systemctl enable xray
-    sleep 1s
-    if systemctl -q is-active xray; then
-      echo "info: Enable and start the Xray service"
-    else
-      echo "warning: Failed to enable and start the Xray service"
-    fi
+    echo 'Please execute the command: systemctl enable v2ray; systemctl start v2ray'
   fi
 }
 
